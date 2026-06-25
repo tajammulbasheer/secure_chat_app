@@ -1,0 +1,23 @@
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local Client Data (contains private keys and certs)
+client/data/
+
+# Local Server Databases and Keys
+server/data/*.key
+server/data/*.json
+server/data/*.srl
+server/data/alice.crt
+server/data/bob.crt
+server/data/charlie.crt
+server/data/test_user.crt
+server/data/kdc.crt
+server/data/*.crt
+server/data/*.pem
+
+# Logs
+*.log
+
