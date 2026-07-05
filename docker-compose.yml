@@ -1,0 +1,14 @@
+services:
+  sts:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sts-kdc-server
+    ports:
+      - "6000:6000"
+    env_file:
+      - .env
+    volumes:
+      - ./server/data/:/app/server/data/
+      - ./.env:/app/.env
+    restart: unless-stopped
