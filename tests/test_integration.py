@@ -3,12 +3,13 @@ import threading
 import time
 import pytest
 import os
-import shutil
 import importlib
 import server
 import server.config
+import server.database
 import server.sts
 import client.config
+import client.client_engine
 from client.client_engine import ClientEngine
 
 def get_free_port():
@@ -31,17 +32,52 @@ def sts_server(tmp_path, monkeypatch):
     """
     Spawns the STS server on a dynamic port in a background thread
     and stops it cleanly on teardown.
+
+    A fresh self-signed Root CA is generated per-test so the integration
+    suite never requires the real `rootCA.key` to be committed to the repo.
     """
-    # 1. Set up temp directory for server data and copy CA files
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    src_ca_cert = os.path.join(project_root, "server", "data", "rootCA.pem")
-    src_ca_key = os.path.join(project_root, "server", "data", "rootCA.key")
-    
+    import datetime
+    from cryptography import x509
+    from cryptography.x509.oid import NameOID
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    # 1. Generate ephemeral Root CA for this test run
     db_dir = tmp_path / "server_data"
     os.makedirs(db_dir, exist_ok=True)
-    
-    shutil.copy(src_ca_cert, os.path.join(db_dir, "rootCA.pem"))
-    shutil.copy(src_ca_key, os.path.join(db_dir, "rootCA.key"))
+
+    ca_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Test CA")])
+    try:
+        from datetime import UTC
+        now = datetime.datetime.now(UTC)
+    except ImportError:
+        now = datetime.datetime.utcnow()
+
+    ca_cert = (
+        x509.CertificateBuilder()
+        .subject_name(ca_name)
+        .issuer_name(ca_name)
+        .public_key(ca_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(days=1))
+        .not_valid_after(now + datetime.timedelta(days=1))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .sign(ca_key, hashes.SHA256())
+    )
+
+    ca_cert_path = str(db_dir / "rootCA.pem")
+    ca_key_path = str(db_dir / "rootCA.key")
+
+    with open(ca_cert_path, "wb") as f:
+        f.write(ca_cert.public_bytes(serialization.Encoding.PEM))
+    with open(ca_key_path, "wb") as f:
+        f.write(ca_key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.TraditionalOpenSSL,
+            serialization.NoEncryption(),
+        ))
+
 
     # 2. Get a free port for the test STS server
     port = get_free_port()
@@ -52,6 +88,7 @@ def sts_server(tmp_path, monkeypatch):
     monkeypatch.setenv("DB_DIR", str(db_dir))
     monkeypatch.setenv("CA_CERT_PATH", str(db_dir / "rootCA.pem"))
     monkeypatch.setenv("CA_KEY_PATH", str(db_dir / "rootCA.key"))
+    monkeypatch.setenv("DB_PATH", str(db_dir / "sts.db"))
     monkeypatch.setenv("USER_DB_PATH", str(db_dir / "users.json"))
     monkeypatch.setenv("BANNED_DB_PATH", str(db_dir / "banned.json"))
     monkeypatch.setenv("CERT_DB_PATH", str(db_dir / "cert_db.json"))
@@ -61,9 +98,15 @@ def sts_server(tmp_path, monkeypatch):
     monkeypatch.setenv("KDC_PORT", str(port))
 
     # Reload configuration modules and sts server to apply overrides
+    # database must be reloaded first to reset module-level _conn / _db_key
     importlib.reload(server.config)
+    importlib.reload(server.database)
     importlib.reload(client.config)
     importlib.reload(server.sts)
+
+    # Patch CA_CERT_PATH directly on the already-imported client_engine module
+    # (importlib.reload of client.config alone won't update the bound name in client_engine)
+    monkeypatch.setattr(client.client_engine, "CA_CERT_PATH", ca_cert_path)
 
     # 4. Mock the STS Admin command console input to terminate immediately
     def mock_input(prompt=""):
@@ -250,3 +293,23 @@ def test_group_chat_e2ee(client_factory):
     # Verify Alice and Charlie receive Bob's message
     assert wait_until(lambda: any("Testing group reply." in msg for sid, msg in alice_messages), timeout=3.0)
     assert wait_until(lambda: any("Testing group reply." in msg for sid, msg in charlie_messages), timeout=3.0)
+
+
+def test_client_auto_reconnect(client_factory):
+    """
+    Verify that the client auto-reconnects when the connection is dropped.
+    """
+    alice = client_factory("alice_reconnect")
+    system_messages = []
+    
+    # Track system messages
+    alice.register_message_callback(lambda sid, msg: system_messages.append(msg) if sid == "__SYSTEM__" else None)
+    
+    # Abruptly close the socket from the client side
+    alice.sock.close()
+    
+    # Wait for lost connection system message
+    assert wait_until(lambda: any("lost" in msg for msg in system_messages), timeout=5.0)
+    
+    # Wait for successful reconnection system message
+    assert wait_until(lambda: any("Reconnected" in msg for msg in system_messages), timeout=5.0)
