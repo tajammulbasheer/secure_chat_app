@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Added GitHub Actions Continuous Integration workflow `.github/workflows/ci.yml` to run test suites on push/PR events.
 - Added comprehensive socket-level end-to-end integration tests in `tests/test_integration.py` verifying registration, authentication, ECDHE key agreement, direct messages, and group chat.
 - Added final security refactoring and architecture `walkthrough.md` mapping out mitigated vulnerabilities and implementation details.
+- Added central server TLS transport wrapping using dedicated certificates signed by the Root CA.
+- Added background socket heartbeat ping-pong pings and client auto-reconnection logic.
 
 ### Changed
 - Restructured code files into packages (`client/`, `server/`, `shared/`, `docs/`) and updated module import structures.
@@ -35,8 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Security
 - Completed a comprehensive architecture and security audit (`PROJECT_ANALYSIS.md`) detailing critical, high, and medium vulnerabilities.
 - Resolved bypassed certificate authority validation ([C-2]) by enforcing x509 signature verification against `rootCA.pem` before fingerprint pinning.
+- Resolved unencrypted command/control STS server communication ([C-3]) by wrapping KDC socket connections in TLS.
 - Mitigated Lack of Perfect Forward Secrecy ([H-1]) and legacy signature padding ([M-1]) by replacing RSA session key encapsulation with signed Ephemeral Diffie-Hellman (ECDHE SECP256R1) key agreement.
 - Fixed complete lack of security in group chats ([C-1]) by replacing static keys with creator-generated pairwise key distribution encrypted with member certificates.
 - Resolved unauthenticated metadata in AES-GCM ([H-2]) by passing serialized message header envelopes (`session_id:sender:counter:timestamp`) as Associated Data.
 - Resolved plaintext storage of client private keys ([C-4]) by encrypting `client.key` on disk using standard PKCS#8 serialization with a user-provided passphrase.
 - Resolved hardcoded configurations ([L-2]) and weak hashing of master password ([H-3]) by using environment configuration loading and a salted PBKDF2 hash scheme for register user checks.
+- Scrubbed plain-text password outputs from log dumps to prevent leakage of credentials.

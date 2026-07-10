@@ -49,3 +49,12 @@ This log acts as the chronological project journal for the Secure Chat App refac
 - Begin **Task 14: Walkthrough and audit verification** to review all completed tasks against the initial security/architecture audit and create `walkthrough.md` in the artifacts directory. (Completed: 2026-07-09). Wrote the master `walkthrough.md` artifact summarizing the security mitigations, repository structural layout, automated test matrices, and direct execution instructions.
 
 - Begin **Task 15: Final presentation readiness review** to perform a final review of the codebase configurations and package health on branch `feature/final-review`. (Completed: 2026-07-09). Conducted a full review of all configuration files, verified package dependencies, ran all unit and integration tests successfully, and generated the final release changelog version 0.2.0. All security refactoring items are fully complete and verified.
+
+## Phase 2: Advanced Security & Architecture Upgrades
+
+- Begin **Task 16: Central Server TLS Integration & Socket Resilience** to wrap central connection sockets in TLS and implement background heartbeat keep-alive messages on branch `feature/tls-and-resilience`. (Completed: 2026-07-09). Configured and wrapped the KDC server listening sockets in an SSL context using dedicated KDC certificates signed by the Root CA. Configured the Client Engine to wrap its KDC sockets in TLS validating server certificate identities. Added background heartbeat ping-pong loops and automatic client reconnect handlers with dynamic reconnection unit tests.
+
+- Begin **Task 17: Database Security & SQL Migration** to migrate user registration and certificate DBs to SQLite with programmatic AES-GCM encryption on branch `feature/db-sql-migration`. (Completed: 2026-07-09). Created `server/database.py` with a WAL-mode SQLite backend and four tables (`users`, `banned_users`, `certificates`, `revoked_serials`). The `cert_pem` column is encrypted with AES-256-GCM using a key derived from MASTER_PASSWORD_HASH via HKDF-SHA256. Added a one-time `_migrate_json_to_sql()` routine in `sts.py` that imports legacy JSON registries and renames them to `.bak`. All 17 tests passed.
+
+### Next Action Item
+- Begin **Task 18: Cryptography & Identity Verification** to implement the Double Ratchet Algorithm for forward secrecy ratcheting and out-of-band Safety Numbers (fingerprint comparison) for identity verification on branch `feature/double-ratchet`.

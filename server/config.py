@@ -26,6 +26,9 @@ if not os.path.exists(DB_DIR):
 
 CA_CERT = make_abs(os.getenv("CA_CERT_PATH", os.path.join(DB_DIR_raw, "rootCA.pem")))
 CA_KEY = make_abs(os.getenv("CA_KEY_PATH", os.path.join(DB_DIR_raw, "rootCA.key")))
+KDC_CERT = make_abs(os.getenv("KDC_CERT_PATH", os.path.join(DB_DIR_raw, "kdc.crt")))
+KDC_KEY = make_abs(os.getenv("KDC_KEY_PATH", os.path.join(DB_DIR_raw, "kdc.key")))
+DB_PATH = make_abs(os.getenv("DB_PATH", os.path.join(DB_DIR_raw, "sts.db")))
 USER_DB = make_abs(os.getenv("USER_DB_PATH", os.path.join(DB_DIR_raw, "users.json")))
 BANNED_DB = make_abs(os.getenv("BANNED_DB_PATH", os.path.join(DB_DIR_raw, "banned.json")))
 CERT_DB = make_abs(os.getenv("CERT_DB_PATH", os.path.join(DB_DIR_raw, "cert_db.json")))

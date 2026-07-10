@@ -62,14 +62,13 @@ Example representation:
    - STS verifies the certificate signature chain, checks validity dates, inspects the certificate revocation status, and verifies the challenge signature. If successful, client is authenticated and registered as online.
 
 ### Phase 2: Key Exchange & Session Agreement
-To set up a direct secure chat, clients must negotiate a symmetric session key:
+To set up a direct secure chat, clients negotiate a symmetric session key with Perfect Forward Secrecy:
 1. **Fetch Peer Certificate**: Alice requests Bob's connection metadata and X.509 certificate from the STS.
-2. **Symmetric Session Key Generation**: Alice generates a random 32-byte master session key and a challenge nonce.
-3. **Encapsulation**: Alice encrypts the master session key using Bob's RSA public key (extracted from his certificate) using RSA-OAEP-SHA256.
-4. **Signature**: Alice signs the session key using her private key to guarantee origin authenticity.
-5. **Relay**: The encrypted session key, signature, challenge nonce, and Alice's certificate are relayed through the STS to Bob.
-6. **Verification & Decryption**: Bob decrypts the session key using his private key and verifies Alice's signature using her certificate.
-7. **Direct Handshake**: Bob connects to Alice's peer port and computes an HMAC-SHA256 MAC of Alice's challenge nonce using the session key. Alice verifies the MAC. The session is confirmed.
+2. **ECDHE Agreement**: Alice and Bob generate ephemeral EC private keys (using SECP256R1) and compute their public keys.
+3. **Signature and Authentication**: Alice signs her ephemeral public key using her RSA private key (with RSA-PSS) to verify origin authenticity.
+4. **Relay**: Alice's signed ephemeral public key is sent to Bob, and Bob's is returned to Alice.
+5. **Verification & Derivation**: Alice and Bob verify each other's signatures and certificates back to the Root CA. They perform Diffie-Hellman key agreement to derive a shared secret, and use HKDF-SHA256 to generate the symmetric session key.
+6. **Direct Handshake**: Bob connects to Alice's peer port. They verify the session key via a secure challenge-response exchange using HMAC-SHA256.
 
 ### Phase 3: Encryption & Key Ratcheting
 - **Data Encryption**: All chat messages and file transfers use **AES-GCM (256-bit key)** with a random 12-byte initialization vector (IV).
@@ -81,9 +80,9 @@ To set up a direct secure chat, clients must negotiate a symmetric session key:
 ---
 
 ## 4. Current Architecture Limitations & Mitigations
-- **Lack of Perfect Forward Secrecy**: Master session keys are encrypted directly via RSA. If a user's long-term private key is leaked, historical session keys can be decrypted. 
-  * *Mitigation Plan*: Transition key exchange to Ephemeral Elliptic Curve Diffie-Hellman (ECDHE) signed by RSA keys.
-- **Unverified Certificate Authorities**: Peer-to-Peer certificate exchanges verify fingerprints against pinned certificates, but don't verify trust chains back to the Root CA on initial connection.
-  * *Mitigation Plan*: Integrate Root CA verification in client validation paths.
+- **Lack of Transport-Level Encryption to STS**: Command/control server communication currently runs over raw TCP sockets.
+  * *Mitigation Plan*: Wrap the STS socket in an SSL/TLS context to secure registration and challenge-response metadata in transit. (Work in progress in Milestone 1).
 - **In-Memory History**: Message histories are transient.
   * *Mitigation Plan*: Implement secure local SQLite logs encrypted with keys derived from the user passphrase.
+- **NAT Traversal (STUN/TURN/ICE)**: Direct P2P assumes both peers are reachable on public/forwarded ports.
+  * *Mitigation Plan*: Introduce NAT hole punching or a server-relayed fallback for firewalled clients.

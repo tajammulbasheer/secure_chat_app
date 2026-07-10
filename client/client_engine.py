@@ -1,5 +1,6 @@
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography import x509
 from cryptography.x509.oid import NameOID
 import socket
@@ -26,7 +27,10 @@ from shared.crypto_utils import (
     verify_certificate,
     get_interval_key,
     generate_ephemeral_keypair,
-    derive_pfs_session_key
+    derive_shared_secret,
+    derive_pfs_session_key,
+    RatchetState,
+    compute_safety_number
 )
 from client.config import KDC_IP, KDC_PORT, PEER_PORT, CA_CERT_PATH
 
@@ -62,6 +66,8 @@ class ClientEngine:
         
         # Graceful shutdown flag
         self.is_running = True
+        self._reconnecting = False
+        self._reconnect_lock = threading.Lock()
 
         # Initialize default logger
         from client.config import LOG_LEVEL
@@ -112,6 +118,7 @@ class ClientEngine:
     # ==========================================================
 
     def connect(self, cert_path, key_path, passphrase=None):
+        self.cert_path = cert_path
         self.key_path = key_path
         self.passphrase = passphrase
 
@@ -126,11 +133,34 @@ class ClientEngine:
                 raise FileNotFoundError(f"Private key file not found at {key_path}")
             raise Exception("Incorrect Passphrase") from e
 
-        with open(cert_path, "r") as f:
-            cert_pem = f.read()
+        # Connect and authenticate
+        self._establish_socket_and_authenticate()
 
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        # Setup user-specific file logging
+        log_dir = os.path.dirname(self.key_path)
+        log_file = os.path.join(log_dir, "client.log")
+        from client.config import LOG_LEVEL
+        self.logger = setup_logger("Client", log_file=log_file, level=LOG_LEVEL, console_level=logging.ERROR)
+        self.logger.info(f"Client connected and authenticated as '{self.username}'")
+
+        self._start_peer_server()
+        self._register_peer_info()
+        self._start_receive_loop()
+
+    def _establish_socket_and_authenticate(self):
+        import ssl
+        ca_path = self._get_ca_path()
+        context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH, cafile=ca_path)
+        context.check_hostname = True
+        if hasattr(ssl, "VERIFY_X509_STRICT"):
+            context.verify_flags &= ~ssl.VERIFY_X509_STRICT
+        
+        raw_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock = context.wrap_socket(raw_sock, server_hostname=self.kdc_ip)
         self.sock.connect((self.kdc_ip, self.kdc_port))
+
+        with open(self.cert_path, "r") as f:
+            cert_pem = f.read()
 
         # STEP 1: Request Challenge
         send_packet(self.sock, {
@@ -145,7 +175,7 @@ class ClientEngine:
         # STEP 2: Sign Challenge
         nonce_b64 = challenge_resp["payload"]["nonce"]
         server_nonce_bytes = base64.b64decode(nonce_b64)
-        signature = sign_nonce(key_path, server_nonce_bytes, password=self.passphrase.encode() if self.passphrase is not None else None)
+        signature = sign_nonce(self.key_path, server_nonce_bytes, password=self.passphrase.encode() if self.passphrase is not None else None)
 
         send_packet(self.sock, {
             "type": "AUTH_VERIFY",
@@ -170,17 +200,6 @@ class ClientEngine:
             raise Exception("Authentication failed")
 
         self.username = response["payload"]["username"]
-
-        # Setup user-specific file logging
-        log_dir = os.path.dirname(self.key_path)
-        log_file = os.path.join(log_dir, "client.log")
-        from client.config import LOG_LEVEL
-        self.logger = setup_logger("Client", log_file=log_file, level=LOG_LEVEL, console_level=logging.ERROR)
-        self.logger.info(f"Client connected and authenticated as '{self.username}'")
-
-        self._start_peer_server()
-        self._register_peer_info()
-        self._start_receive_loop()
 
     # ==========================================================
     # PUBLIC API
@@ -213,23 +232,30 @@ class ClientEngine:
             raise Exception("Session not found")
 
         session = self.sessions[session_id]
-        
-        session["send_counter"] += 1
-        counter = session["send_counter"]
         current_time = int(time.time())
 
-        interval_index = (counter - 1) // ROTATION_INTERVAL
-        
-        active_interval_key = get_interval_key(session["key"], interval_index)
-        ad = f"{session_id}:{self.username}:{counter}:{current_time}".encode()
-        nonce, ciphertext = aes_encrypt(active_interval_key, message.encode(), ad)
-    
+        # --- DOUBLE RATCHET for direct sessions ---
+        if "ratchet" in session:
+            ratchet = session["ratchet"]
+            msg_key, counter = ratchet.next_encrypt_key()
+            ad = f"{session_id}:{self.username}:{counter}:{current_time}".encode()
+            nonce, ciphertext = aes_encrypt(msg_key, message.encode(), ad)
+            del msg_key  # forward secrecy: discard after use
+        else:
+            # Legacy path for group sessions (static key + interval HKDF)
+            session["send_counter"] += 1
+            counter = session["send_counter"]
+            interval_index = (counter - 1) // ROTATION_INTERVAL
+            active_interval_key = get_interval_key(session["key"], interval_index)
+            ad = f"{session_id}:{self.username}:{counter}:{current_time}".encode()
+            nonce, ciphertext = aes_encrypt(active_interval_key, message.encode(), ad)
+
         packet = {
             "type": "SESSION_MESSAGE", 
             "payload": {
                 "session_id": session_id,
                 "sender": self.username,
-                "counter": session["send_counter"],
+                "counter": counter,
                 "timestamp": current_time, 
                 "nonce": nonce,
                 "ciphertext": ciphertext
@@ -259,6 +285,7 @@ class ClientEngine:
             raise Exception("Peer not connected")
 
         session = self.sessions[session_id]
+        has_ratchet = "ratchet" in session
 
         CHUNK_SIZE = 32 * 1024
         filename = os.path.basename(filepath)
@@ -268,16 +295,20 @@ class ClientEngine:
         with open(filepath, "rb") as f:
             for chunk_index in range(total_chunks):
                 chunk = f.read(CHUNK_SIZE)
-                session["send_counter"] += 1
-                counter = session["send_counter"]
-                
-                # --- APPLY KDF RATCHET TO FILE CHUNKS ---
-                interval_index = (counter - 1) // ROTATION_INTERVAL
-                active_interval_key = get_interval_key(session["key"], interval_index)
-
                 chunk_timestamp = int(time.time())
-                ad = f"{session_id}:{self.username}:{counter}:{chunk_timestamp}".encode()
-                nonce, ciphertext = aes_encrypt(active_interval_key, chunk, ad)
+
+                if has_ratchet:
+                    msg_key, counter = session["ratchet"].next_encrypt_key()
+                    ad = f"{session_id}:{self.username}:{counter}:{chunk_timestamp}".encode()
+                    nonce, ciphertext = aes_encrypt(msg_key, chunk, ad)
+                    del msg_key
+                else:
+                    session["send_counter"] += 1
+                    counter = session["send_counter"]
+                    interval_index = (counter - 1) // ROTATION_INTERVAL
+                    active_interval_key = get_interval_key(session["key"], interval_index)
+                    ad = f"{session_id}:{self.username}:{counter}:{chunk_timestamp}".encode()
+                    nonce, ciphertext = aes_encrypt(active_interval_key, chunk, ad)
 
                 send_packet(peer_sock, {
                     "type": "FILE_CHUNK",
@@ -287,7 +318,7 @@ class ClientEngine:
                         "filename": filename,
                         "chunk_index": chunk_index,
                         "total_chunks": total_chunks,
-                        "counter": session["send_counter"],
+                        "counter": counter,
                         "timestamp": chunk_timestamp,
                         "nonce": nonce,
                         "ciphertext": ciphertext
@@ -309,7 +340,7 @@ class ClientEngine:
     # SECURITY PROTOCOLS (MITM & PINNING)
     # ==========================================================
 
-    def _get_ca_path(self):
+    def _get_ca_path(self, key_path=None):
         """Locate rootCA.pem dynamically from standard locations."""
         # 0. Check from config override
         if CA_CERT_PATH:
@@ -324,14 +355,15 @@ class ClientEngine:
         if os.path.exists(project_ca):
             return project_ca
         
-        # 2. Check relative to self.key_path if available
-        if self.key_path:
+        # 2. Check relative to key_path or self.key_path if available
+        target_key = key_path or self.key_path
+        if target_key:
             # Same directory as client key
-            local_ca = os.path.abspath(os.path.join(os.path.dirname(self.key_path), "rootCA.pem"))
+            local_ca = os.path.abspath(os.path.join(os.path.dirname(target_key), "rootCA.pem"))
             if os.path.exists(local_ca):
                 return local_ca
             # Parent directory of client key directory (e.g. client/data/rootCA.pem)
-            parent_ca = os.path.abspath(os.path.join(os.path.dirname(self.key_path), "..", "rootCA.pem"))
+            parent_ca = os.path.abspath(os.path.join(os.path.dirname(target_key), "..", "rootCA.pem"))
             if os.path.exists(parent_ca):
                 return parent_ca
 
@@ -392,12 +424,9 @@ class ClientEngine:
         # 3. Sign Alice's ephemeral public key with her long-term RSA private key using RSA-PSS
         signature = sign_nonce(self.key_path, alice_public_key_b64.encode(), password=self.passphrase.encode() if self.passphrase is not None else None)
 
-        # 4. Save session locally
+        # 4. Save session locally (ratchet will be initialized in _handle_session_confirm)
         self.sessions[session_id] = {
-            "key": None,  # Derived later when Bob's ephemeral key is verified
             "ephemeral_private_key": alice_private_key,
-            "send_counter": 0,
-            "recv_counters": {}, 
             "peer_cert": target_cert,
             "challenge": challenge_nonce, 
             "confirmed": False            
@@ -437,6 +466,8 @@ class ClientEngine:
     # ==========================================================
 
     def _start_peer_server(self):
+        if self.peer_listener_sock:
+            return
         def peer_server():
             server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -504,8 +535,11 @@ class ClientEngine:
                     packet = None
 
                 if not packet:
-                    if self.is_running and self.message_callback:
-                        self.message_callback("__SYSTEM__", "Connection to the server was lost.")
+                    if self.is_running:
+                        self.logger.warning("Connection to KDC lost. Initiating auto-reconnect...")
+                        if self.message_callback:
+                            self.message_callback("__SYSTEM__", "Connection to the server was lost. Reconnecting...")
+                        self._reconnect()
                     break
 
                 ptype = packet.get("type")
@@ -524,6 +558,11 @@ class ClientEngine:
                         self.message_callback("__ONLINE__", users_list)
                 elif ptype == "PEER_CERT_RESPONSE":
                     self._handle_peer_cert_response(packet)
+                elif ptype == "PING":
+                    try:
+                        send_packet(self.sock, {"type": "PONG", "payload": {}})
+                    except Exception as e:
+                        self.logger.error(f"Failed to send PONG response: {e}")
                 elif ptype == "AUTH_FAILED":
                     err_msg = packet.get("payload", {}).get("message", "Forced disconnect")
                     if self.message_callback:
@@ -537,6 +576,53 @@ class ClientEngine:
                 
 
         threading.Thread(target=receive_loop, daemon=True).start()
+
+    def _reconnect(self):
+        with self._reconnect_lock:
+            if self._reconnecting:
+                self.logger.debug("Reconnection already in progress.")
+                return
+            self._reconnecting = True
+
+        def reconnect_thread():
+            backoff = 1.0
+            max_backoff = 32.0
+            
+            while self.is_running:
+                self.logger.info(f"Attempting to reconnect to KDC in {backoff} seconds...")
+                time.sleep(backoff)
+                
+                if not self.is_running:
+                    break
+                
+                try:
+                    self.logger.info("Attempting KDC connection & authentication...")
+                    if self.sock:
+                        try:
+                            self.sock.close()
+                        except:
+                            pass
+                    
+                    self._establish_socket_and_authenticate()
+                    self._register_peer_info()
+                    self._start_receive_loop()
+                    
+                    self.logger.info("Reconnection successful.")
+                    if self.message_callback:
+                        self.message_callback("__SYSTEM__", "Reconnected to the server successfully.")
+                    
+                    with self._reconnect_lock:
+                        self._reconnecting = False
+                    break
+                except Exception as e:
+                    self.logger.error(f"Reconnection attempt failed: {e}")
+                    backoff = min(backoff * 2, max_backoff)
+            
+            if not self.is_running:
+                with self._reconnect_lock:
+                    self._reconnecting = False
+
+        threading.Thread(target=reconnect_thread, daemon=True).start()
 
     # ==========================================================
     # DATA HANDLERS
@@ -573,15 +659,14 @@ class ClientEngine:
                     self.message_callback("__SYSTEM__", err)
                 return
 
-        # 3. Generate Bob's ephemeral EC key pair, sign it, and derive session key
+        # 3. Generate Bob's ephemeral EC key pair, sign it, and derive ratchet
         bob_private_key, bob_public_key_b64 = generate_ephemeral_keypair()
         bob_signature = sign_nonce(self.key_path, bob_public_key_b64.encode(), password=self.passphrase.encode() if self.passphrase is not None else None)
-        session_key = derive_pfs_session_key(bob_private_key, alice_public_key_b64)
+        shared_secret = derive_shared_secret(bob_private_key, alice_public_key_b64)
+        ratchet = RatchetState.from_shared_secret(shared_secret, initiator=False)
 
         self.sessions[session_id] = {
-            "key": session_key,
-            "send_counter": 0,
-            "recv_counters": {}, 
+            "ratchet": ratchet,
             "peer_cert": peer_cert,
             "confirmed": True 
         }
@@ -611,7 +696,14 @@ class ClientEngine:
 
                 if "challenge" in payload:
                     challenge_bytes = base64.b64decode(payload["challenge"])
-                    mac = generate_mac(session_key, challenge_bytes)
+                    # Derive temporary MAC key matching Alice's verification path
+                    temp_mac_key = HKDF(
+                        algorithm=hashes.SHA256(),
+                        length=32,
+                        salt=None,
+                        info=b'secure_chat_pfs_key_exchange',
+                    ).derive(shared_secret)
+                    mac = generate_mac(temp_mac_key, challenge_bytes)
                     
                     send_packet(peer_sock, {
                         "type": "SESSION_CONFIRM",
@@ -652,31 +744,47 @@ class ClientEngine:
             self.logger.warning(f"Blocked replay attack: Packet from {sender} outside time window.")
             return
 
-        last_counter = session["recv_counters"].get(sender, 0)
-        if counter <= last_counter:
-            self.logger.warning(f"Blocked replay attack: Dropped old message from {sender}")
-            return
-        
-        interval_index = (counter - 1)  // ROTATION_INTERVAL
-    
-        active_interval_key = get_interval_key(session["key"], interval_index)
-
         ad = f"{session_id}:{sender}:{counter}:{packet_time}".encode()
-        try:
-            plaintext = aes_decrypt(
-                active_interval_key,
-                payload["nonce"],
-                payload["ciphertext"],
-                ad
-            )
-        except Exception as e:
-            warn_msg = f"[SECURITY WARNING] Decryption failed for message from {sender} (counter {counter}). Possible header modification or integrity failure!"
-            self.logger.warning(warn_msg)
-            if self.message_callback:
-                self.message_callback("__SYSTEM__", warn_msg)
-            return
 
-        session["recv_counters"][sender] = counter
+        # --- DOUBLE RATCHET for direct sessions ---
+        if "ratchet" in session:
+            try:
+                msg_key = session["ratchet"].next_decrypt_key(counter)
+            except ValueError as e:
+                self.logger.warning(f"Ratchet rejected message from {sender} (counter {counter}): {e}")
+                return
+            try:
+                plaintext = aes_decrypt(msg_key, payload["nonce"], payload["ciphertext"], ad)
+            except Exception:
+                warn_msg = f"[SECURITY WARNING] Decryption failed for message from {sender} (counter {counter}). Possible header modification or integrity failure!"
+                self.logger.warning(warn_msg)
+                if self.message_callback:
+                    self.message_callback("__SYSTEM__", warn_msg)
+                return
+            finally:
+                del msg_key
+        else:
+            # Legacy path for group sessions
+            last_counter = session["recv_counters"].get(sender, 0)
+            if counter <= last_counter:
+                self.logger.warning(f"Blocked replay attack: Dropped old message from {sender}")
+                return
+            interval_index = (counter - 1) // ROTATION_INTERVAL
+            active_interval_key = get_interval_key(session["key"], interval_index)
+            try:
+                plaintext = aes_decrypt(
+                    active_interval_key,
+                    payload["nonce"],
+                    payload["ciphertext"],
+                    ad
+                )
+            except Exception:
+                warn_msg = f"[SECURITY WARNING] Decryption failed for message from {sender} (counter {counter}). Possible header modification or integrity failure!"
+                self.logger.warning(warn_msg)
+                if self.message_callback:
+                    self.message_callback("__SYSTEM__", warn_msg)
+                return
+            session["recv_counters"][sender] = counter
 
         display_text = f"{sender}: {plaintext.decode()}" if sender != "unknown" else plaintext.decode()
 
@@ -697,30 +805,47 @@ class ClientEngine:
         if not session:
             return
 
-        last_counter = session["recv_counters"].get(sender, 0)
-        if counter <= last_counter:
-            return
-        # --- APPLY KDF RATCHET TO RECEIVED FILE CHUNKS ---
-        interval_index = (counter - 1) // ROTATION_INTERVAL
-        active_interval_key = get_interval_key(session["key"], interval_index)
-
         timestamp = payload.get("timestamp", 0)
         ad = f"{session_id}:{sender}:{counter}:{timestamp}".encode()
-        try:
-            chunk_data = aes_decrypt(
-                active_interval_key,
-                payload["nonce"],
-                payload["ciphertext"],
-                ad
-            )
-        except Exception as e:
-            warn_msg = f"[SECURITY WARNING] Decryption failed for file chunk from {sender} (counter {counter}, file {filename}). Possible header modification or integrity failure!"
-            self.logger.warning(warn_msg)
-            if self.message_callback:
-                self.message_callback("__SYSTEM__", warn_msg)
-            return
 
-        session["recv_counters"][sender] = counter
+        # --- DOUBLE RATCHET for direct sessions ---
+        if "ratchet" in session:
+            try:
+                msg_key = session["ratchet"].next_decrypt_key(counter)
+            except ValueError as e:
+                self.logger.warning(f"Ratchet rejected file chunk from {sender} (counter {counter}): {e}")
+                return
+            try:
+                chunk_data = aes_decrypt(msg_key, payload["nonce"], payload["ciphertext"], ad)
+            except Exception:
+                warn_msg = f"[SECURITY WARNING] Decryption failed for file chunk from {sender} (counter {counter}, file {filename}). Possible header modification or integrity failure!"
+                self.logger.warning(warn_msg)
+                if self.message_callback:
+                    self.message_callback("__SYSTEM__", warn_msg)
+                return
+            finally:
+                del msg_key
+        else:
+            # Legacy path for group sessions
+            last_counter = session["recv_counters"].get(sender, 0)
+            if counter <= last_counter:
+                return
+            interval_index = (counter - 1) // ROTATION_INTERVAL
+            active_interval_key = get_interval_key(session["key"], interval_index)
+            try:
+                chunk_data = aes_decrypt(
+                    active_interval_key,
+                    payload["nonce"],
+                    payload["ciphertext"],
+                    ad
+                )
+            except Exception:
+                warn_msg = f"[SECURITY WARNING] Decryption failed for file chunk from {sender} (counter {counter}, file {filename}). Possible header modification or integrity failure!"
+                self.logger.warning(warn_msg)
+                if self.message_callback:
+                    self.message_callback("__SYSTEM__", warn_msg)
+                return
+            session["recv_counters"][sender] = counter
 
         # WRITE DIRECTLY TO DISK (Prevents RAM exhaustion)
         output_path = f"received_{filename}"
@@ -765,6 +890,10 @@ class ClientEngine:
             del self.peer_sockets[session_id]
 
         if session_id in self.sessions:
+            # Zeroize ratchet key material before discarding
+            ratchet = self.sessions[session_id].get("ratchet")
+            if ratchet:
+                ratchet.clear()
             del self.sessions[session_id]
 
     def _register_peer_info(self):
@@ -915,7 +1044,15 @@ class ClientEngine:
     def register_new_user(self, username, cert_path, key_path, master_password, passphrase=None):
         username = username.lower()
 
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        import ssl
+        ca_path = self._get_ca_path(key_path)
+        context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH, cafile=ca_path)
+        context.check_hostname = True
+        if hasattr(ssl, "VERIFY_X509_STRICT"):
+            context.verify_flags &= ~ssl.VERIFY_X509_STRICT
+
+        raw_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock = context.wrap_socket(raw_sock, server_hostname=self.kdc_ip)
         sock.connect((self.kdc_ip, self.kdc_port))
 
         private_key = rsa.generate_private_key(
@@ -1012,15 +1149,28 @@ class ClientEngine:
             self._destroy_session(session_id)
             return
 
-        # 2. Derive the session key on Alice's side using her ephemeral private key and Bob's public key
+        # 2. Derive the shared secret and initialize the Double Ratchet (Alice is initiator)
         alice_private_key = session["ephemeral_private_key"]
-        session_key = derive_pfs_session_key(alice_private_key, bob_public_key_b64)
+        shared_secret = derive_shared_secret(alice_private_key, bob_public_key_b64)
 
-        # 3. Verify the MAC using the derived session key and stored challenge
-        if verify_mac(session_key, session["challenge"], received_mac):
-            session["key"] = session_key
+        # 3. Verify the MAC using a temporary session key derived from the shared secret
+        #    (Bob computed the MAC with the same shared secret during SESSION_CONFIRM)
+        temp_session_key = HKDF(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=None,
+            info=b'secure_chat_pfs_key_exchange',
+        ).derive(shared_secret)
+
+        if verify_mac(temp_session_key, session["challenge"], received_mac):
+            # 4. Initialize the Double Ratchet (Alice = initiator)
+            ratchet = RatchetState.from_shared_secret(shared_secret, initiator=True)
+            session["ratchet"] = ratchet
             session["confirmed"] = True
-            self.logger.info(f"Session {session_id} successfully confirmed via MAC!")
+            # Clean up ephemeral key — no longer needed
+            session.pop("ephemeral_private_key", None)
+            session.pop("challenge", None)
+            self.logger.info(f"Session {session_id} confirmed with Double Ratchet!")
             if self.message_callback:
                 self.message_callback(session_id, "[System: Secure connection confirmed by peer]")
         else:
@@ -1029,3 +1179,35 @@ class ClientEngine:
             if self.message_callback:
                 self.message_callback(session_id, err)
             self._destroy_session(session_id)
+
+    # ==========================================================
+    # SAFETY NUMBERS (Identity Verification)
+    # ==========================================================
+
+    def get_safety_number(self, session_id):
+        """Compute the 60-digit Safety Number fingerprint for a direct session."""
+        session = self.sessions.get(session_id)
+        if not session:
+            raise Exception("Session not found")
+        peer_cert = session.get("peer_cert")
+        if not peer_cert:
+            raise Exception("Peer certificate not available for this session")
+
+        my_cert = self.get_my_cert()
+
+        # Determine peer username from session_id
+        parts = session_id.split("_")
+        if len(parts) >= 3 and parts[0] == "direct":
+            peer_username = parts[1] if parts[2] == self.username else parts[2]
+        else:
+            raise Exception("Safety Numbers are only available for direct sessions")
+
+        return compute_safety_number(my_cert, self.username, peer_cert, peer_username)
+
+    def get_my_cert(self):
+        """Load and return this client's certificate PEM string."""
+        cert_path = self.key_path.replace(".key", ".crt")
+        if not os.path.exists(cert_path):
+            cert_path = self.key_path.replace(".key", ".pem")
+        with open(cert_path, "r") as f:
+            return f.read()

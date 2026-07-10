@@ -1,6 +1,11 @@
 # Task Management Board (Secure Chat App)
 
 ## 🔴 In Progress
+- [ ] **Task 18: Cryptography & Identity Verification** (Milestone 3) - Implement Double Ratchet and out-of-band Safety Numbers fingerprints.
+  - Branch: `feature/double-ratchet`
+
+## 🟡 Next Tasks (Advanced Upgrades)
+- [ ] **Task 19: GUI Refinements** (Milestone 4) - Style UI views using Qt Style Sheets (.qss).
 
 ## 🟢 Completed
 - [x] **Task 00: Comprehensive Project Security & Architecture Audit** (Completed: 2026-07-09)
@@ -19,3 +24,5 @@
 - [x] **Task 13: Readme polishing and demo recording** (Completed: 2026-07-09)
 - [x] **Task 14: Walkthrough and audit verification** (Completed: 2026-07-09)
 - [x] **Task 15: Final presentation readiness review** (Completed: 2026-07-09)
+- [x] **Task 16: Central Server TLS Integration & Socket Resilience** (Completed: 2026-07-09)
+- [x] **Task 17: Database Security & SQL Migration** (Completed: 2026-07-09)

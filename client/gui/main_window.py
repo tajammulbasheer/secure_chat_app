@@ -2,11 +2,117 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QListWidget, QTextEdit, QLineEdit,
     QPushButton, QLabel, QInputDialog, QFileDialog,
-    QMessageBox
+    QMessageBox, QDialog, QGridLayout
 )
-from PyQt6.QtCore import Qt, pyqtSignal 
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QFont
 from client.gui.register_window import RegisterWindow
 import os
+
+
+class SafetyNumberDialog(QDialog):
+    """Signal-style Safety Numbers verification dialog.
+    
+    Displays a 60-digit fingerprint (12 groups of 5 digits) in a 4×3 grid
+    so users can verify each other's identity out-of-band.
+    """
+
+    def __init__(self, safety_number: str, peer_name: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Verify Safety Number")
+        self.setMinimumWidth(420)
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #1a1a2e;
+            }
+            QLabel {
+                color: #e0e0e0;
+            }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(16)
+
+        # Header
+        icon_label = QLabel("🔐  Safety Numbers")
+        icon_label.setStyleSheet("font-size: 18px; font-weight: bold; color: #00d2ff;")
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(icon_label)
+
+        # Instructions
+        instructions = QLabel(
+            f"Verify your contact <b>{peer_name}</b>'s identity by\n"
+            "reading these numbers aloud over a separate channel."
+        )
+        instructions.setWordWrap(True)
+        instructions.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        instructions.setStyleSheet("color: #a0a0c0; font-size: 12px; padding: 4px 12px;")
+        layout.addWidget(instructions)
+
+        # Fingerprint grid (4 rows × 3 columns)
+        groups = safety_number.split()
+        grid_widget = QWidget()
+        grid_widget.setStyleSheet("""
+            QWidget {
+                background-color: #16213e;
+                border-radius: 8px;
+                padding: 16px;
+            }
+        """)
+        grid = QGridLayout(grid_widget)
+        grid.setSpacing(12)
+
+        mono_font = QFont("Consolas", 16)
+        mono_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 2)
+
+        for i, group in enumerate(groups):
+            row = i // 3
+            col = i % 3
+            label = QLabel(group)
+            label.setFont(mono_font)
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            label.setStyleSheet("color: #00d2ff; padding: 4px;")
+            grid.addWidget(label, row, col)
+
+        layout.addWidget(grid_widget)
+
+        # Buttons
+        btn_layout = QHBoxLayout()
+
+        match_btn = QPushButton("Numbers Match ✓")
+        match_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #0f3460;
+                color: #00d2ff;
+                border: 1px solid #00d2ff;
+                border-radius: 6px;
+                padding: 8px 20px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #1a4a7a;
+            }
+        """)
+        match_btn.clicked.connect(self.accept)
+        btn_layout.addWidget(match_btn)
+
+        close_btn = QPushButton("Close")
+        close_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2a2a3e;
+                color: #a0a0c0;
+                border: 1px solid #3a3a5e;
+                border-radius: 6px;
+                padding: 8px 20px;
+            }
+            QPushButton:hover {
+                background-color: #3a3a5e;
+            }
+        """)
+        close_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(close_btn)
+
+        layout.addLayout(btn_layout)
 
 class MainWindow(QMainWindow):
     
@@ -113,6 +219,24 @@ class MainWindow(QMainWindow):
         self.file_button.clicked.connect(self._send_file)
         input_layout.addWidget(self.file_button)
 
+        self.verify_button = QPushButton("🔐 Verify Identity")
+        self.verify_button.setStyleSheet("""
+            QPushButton {
+                background-color: #0f3460;
+                color: #00d2ff;
+                border: 1px solid #00d2ff;
+                border-radius: 4px;
+                padding: 4px 10px;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: #1a4a7a;
+            }
+        """)
+        self.verify_button.clicked.connect(self._show_safety_number)
+        self.verify_button.setVisible(False)  # Only shown for direct sessions
+        input_layout.addWidget(self.verify_button)
+
         self.end_button = QPushButton("End Session")
         self.end_button.clicked.connect(self._end_session)
         input_layout.addWidget(self.end_button)
@@ -201,6 +325,10 @@ class MainWindow(QMainWindow):
         if self.current_session in self.chat_history:
             for msg in self.chat_history[self.current_session]:
                 self.chat_area.append(msg)
+
+        # 4. Show/hide the Verify Identity button (only for direct sessions)
+        is_direct = self.current_session and self.current_session.startswith("direct_")
+        self.verify_button.setVisible(is_direct)
 
     def _send_message(self):
 
@@ -310,4 +438,17 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'engine') and self.engine:
             self.engine.shutdown() # Tell the background threads to die quietly
             
-        event.accept() # Allow the window to clos
+        event.accept() # Allow the window to close
+
+    def _show_safety_number(self):
+        """Display the Safety Numbers dialog for the current direct session."""
+        if not self.current_session or not self.current_session.startswith("direct_"):
+            return
+
+        try:
+            safety_number = self.engine.get_safety_number(self.current_session)
+            peer_name = self._get_friendly_name(self.current_session)
+            dialog = SafetyNumberDialog(safety_number, peer_name, parent=self)
+            dialog.exec()
+        except Exception as e:
+            QMessageBox.warning(self, "Safety Numbers", f"Could not compute Safety Number:\n{str(e)}")
