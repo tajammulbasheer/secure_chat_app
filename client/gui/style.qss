@@ -1,0 +1,103 @@
+/* Main Application Styling */
+QWidget {
+    background-color: #1e1e2e;
+    color: #cdd6f4;
+    font-family: "Inter", "Segoe UI", sans-serif;
+    font-size: 14px;
+}
+
+/* Lists and Text Areas */
+QListWidget, QTextEdit {
+    background-color: #11111b;
+    border: 1px solid #313244;
+    border-radius: 8px;
+    padding: 8px;
+    color: #cdd6f4;
+}
+
+QListWidget::item:selected {
+    background-color: #313244;
+    border-radius: 4px;
+}
+
+/* Inputs */
+QLineEdit {
+    background-color: #11111b;
+    border: 1px solid #313244;
+    border-radius: 6px;
+    padding: 8px;
+    color: #cdd6f4;
+}
+
+QLineEdit:focus {
+    border: 1px solid #89b4fa;
+}
+
+/* Buttons */
+QPushButton {
+    background-color: #313244;
+    color: #cdd6f4;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 16px;
+    font-weight: bold;
+}
+
+QPushButton:hover {
+    background-color: #45475a;
+}
+
+QPushButton:pressed {
+    background-color: #585b70;
+}
+
+/* Primary Button (Neon Blue) */
+QPushButton#primaryButton {
+    background-color: #89b4fa;
+    color: #11111b;
+}
+
+QPushButton#primaryButton:hover {
+    background-color: #b4befe;
+}
+
+QPushButton#primaryButton:pressed {
+    background-color: #74c7ec;
+}
+
+/* Dialogs */
+QDialog {
+    background-color: #1e1e2e;
+}
+
+/* Specific Labels */
+QLabel#identityLabel {
+    font-weight: bold;
+    color: #89b4fa;
+    font-size: 16px;
+}
+
+QLabel#headerLabel {
+    font-size: 18px;
+    font-weight: bold;
+    color: #89b4fa;
+}
+
+QLabel#instructionLabel {
+    color: #a6adc8;
+    font-size: 13px;
+}
+
+/* Safety Number Grid Container */
+QWidget#safetyNumberGrid {
+    background-color: #11111b;
+    border-radius: 8px;
+}
+
+/* Safety Number Display */
+QLabel#safetyNumberLabel {
+    color: #89b4fa;
+    font-family: "Consolas", monospace;
+    font-size: 16px;
+    letter-spacing: 2px;
+}
