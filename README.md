@@ -1,4 +1,4 @@
-# Portfolio Project: Secure E2EE Hybrid P2P Chat Application
+# Secure E2EE Hybrid P2P Chat Application
 
 A secure, hybrid client-server and peer-to-peer (P2P) instant messaging application written in Python. It features end-to-end encryption (E2EE) using ephemeral ECDHE key exchanges, certificate-based challenge-response authentication, custom TCP framing, structured logging, and automated testing suites.
 
