@@ -37,6 +37,7 @@ CRL_DB = make_abs(os.getenv("CRL_DB_PATH", os.path.join(DB_DIR_raw, "revoked_ser
 # Default admin master password check params (Default: "admin" with "default_salt_for_development")
 MASTER_PASSWORD_HASH = os.getenv("MASTER_PASSWORD_HASH", "6c537790c2fc1990f71039615ca9f34a9862f73838ec342929da92984b07f436")
 MASTER_PASSWORD_SALT = os.getenv("MASTER_PASSWORD_SALT", "default_salt_for_development")
+DEV_MODE = os.getenv("STS_DEV_MODE", "false").lower() == "true"
 
 # Logging configurations
 import logging
