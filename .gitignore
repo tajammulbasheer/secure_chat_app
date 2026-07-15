@@ -10,6 +10,8 @@ client/data/
 server/data/*.key
 server/data/*.json
 server/data/*.srl
+server/data/*.db
+server/data/*.bak
 server/data/alice.crt
 server/data/bob.crt
 server/data/charlie.crt

@@ -153,6 +153,9 @@ class ClientEngine:
         context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH, cafile=ca_path)
         context.check_hostname = True
         if hasattr(ssl, "VERIFY_X509_STRICT"):
+            # Temporary workaround: disable strict X509 validation because the self-signed dev CA
+            # is missing strict RFC-5280 extensions. 
+            # TODO: Regenerate the CA with correct extensions.
             context.verify_flags &= ~ssl.VERIFY_X509_STRICT
         
         raw_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -1049,6 +1052,9 @@ class ClientEngine:
         context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH, cafile=ca_path)
         context.check_hostname = True
         if hasattr(ssl, "VERIFY_X509_STRICT"):
+            # Temporary workaround: disable strict X509 validation because the self-signed dev CA
+            # is missing strict RFC-5280 extensions. 
+            # TODO: Regenerate the CA with correct extensions.
             context.verify_flags &= ~ssl.VERIFY_X509_STRICT
 
         raw_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -1096,22 +1102,15 @@ class ClientEngine:
         cert_pem = response["payload"]["certificate"]
 
         with open(key_path, "wb") as f:
-            if passphrase:
-                f.write(
-                    private_key.private_bytes(
-                        serialization.Encoding.PEM,
-                        serialization.PrivateFormat.PKCS8,
-                        serialization.BestAvailableEncryption(passphrase.encode())
-                    )
+            if not passphrase:
+                raise ValueError("Passphrase cannot be empty. Private keys must be encrypted.")
+            f.write(
+                private_key.private_bytes(
+                    serialization.Encoding.PEM,
+                    serialization.PrivateFormat.PKCS8,
+                    serialization.BestAvailableEncryption(passphrase.encode())
                 )
-            else:
-                f.write(
-                    private_key.private_bytes(
-                        serialization.Encoding.PEM,
-                        serialization.PrivateFormat.TraditionalOpenSSL,
-                        serialization.NoEncryption()
-                    )
-                )
+            )
 
         with open(cert_path, "w") as f:
             f.write(cert_pem)
