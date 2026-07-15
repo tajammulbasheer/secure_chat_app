@@ -1,7 +1,7 @@
 # 2. Verify Client Certificates against Root CA
 
 * Status: **Accepted**
-* Date: 2026-06-26
+* Date: 2026-06-28
 * Decided by: Workflow Architect / Developer
 
 ## Context and Problem Statement

@@ -1,7 +1,7 @@
 # 10. Server Containerization using Docker
 
 * Status: **Accepted**
-* Date: 2026-06-26
+* Date: 2026-07-06
 * Decided by: Workflow Architect / Developer
 
 ## Context and Problem Statement

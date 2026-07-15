@@ -23,3 +23,16 @@ server/data/*.pem
 # Logs
 *.log
 
+# Database & Backups
+*.sqlite
+*.sqlite3
+*.bak
+
+# Environment Variables
+.env*
+!.env.example
+
+# Internal / AI Context
+PROJECT_ANALYSIS.md
+TODO.md
+docs/memory/

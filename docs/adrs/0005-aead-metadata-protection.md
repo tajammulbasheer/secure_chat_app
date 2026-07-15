@@ -1,7 +1,7 @@
 # 5. AEAD Associated Data Integration
 
 * Status: **Accepted**
-* Date: 2026-06-26
+* Date: 2026-07-01
 * Decided by: Workflow Architect / Developer
 
 ## Context and Problem Statement

@@ -1,7 +1,7 @@
 # 4. Creator-Distributed Pairwise Group Keys
 
 * Status: **Accepted**
-* Date: 2026-06-26
+* Date: 2026-06-30
 * Decided by: Workflow Architect / Developer
 
 ## Context and Problem Statement
