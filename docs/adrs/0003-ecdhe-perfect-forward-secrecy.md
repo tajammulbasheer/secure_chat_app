@@ -1,7 +1,7 @@
 # 3. Perfect Forward Secrecy (ECDHE) & RSA-PSS Signatures
 
 * Status: **Accepted**
-* Date: 2026-06-26
+* Date: 2026-06-29
 * Decided by: Workflow Architect / Developer
 
 ## Context and Problem Statement

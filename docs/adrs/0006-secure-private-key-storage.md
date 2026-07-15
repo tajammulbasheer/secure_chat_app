@@ -1,7 +1,7 @@
 # 6. Secure Local Client Private Key Storage
 
 * Status: **Accepted**
-* Date: 2026-06-26
+* Date: 2026-07-02
 * Decided by: Workflow Architect / Developer
 
 ## Context and Problem Statement

@@ -1,7 +1,7 @@
 # 1. Directory Restructuring
 
 * Status: **Accepted**
-* Date: 2026-06-26
+* Date: 2026-06-27
 * Decided by: Workflow Architect / Developer
 
 ## Context and Problem Statement

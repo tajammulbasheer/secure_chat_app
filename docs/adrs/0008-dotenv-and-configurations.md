@@ -1,7 +1,7 @@
 # 8. Configuration Management using Dotenv
 
 * Status: **Accepted**
-* Date: 2026-06-26
+* Date: 2026-07-04
 * Decided by: Workflow Architect / Developer
 
 ## Context and Problem Statement

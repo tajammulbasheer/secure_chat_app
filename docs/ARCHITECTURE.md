@@ -80,9 +80,7 @@ To set up a direct secure chat, clients negotiate a symmetric session key with P
 ---
 
 ## 4. Current Architecture Limitations & Mitigations
-- **Lack of Transport-Level Encryption to STS**: Command/control server communication currently runs over raw TCP sockets.
-  * *Mitigation Plan*: Wrap the STS socket in an SSL/TLS context to secure registration and challenge-response metadata in transit. (Work in progress in Milestone 1).
-- **In-Memory History**: Message histories are transient.
-  * *Mitigation Plan*: Implement secure local SQLite logs encrypted with keys derived from the user passphrase.
 - **NAT Traversal (STUN/TURN/ICE)**: Direct P2P assumes both peers are reachable on public/forwarded ports.
   * *Mitigation Plan*: Introduce NAT hole punching or a server-relayed fallback for firewalled clients.
+- **In-Memory Client History**: Message histories are currently transient on the client-side.
+  * *Mitigation Plan*: Implement secure local SQLite logs encrypted with keys derived from the user passphrase on the client app. *(Note: Central server storage has already been successfully migrated to encrypted SQLite)*.

@@ -1,7 +1,7 @@
 # 7. Automated Test Suite using Pytest
 
 * Status: **Accepted**
-* Date: 2026-06-26
+* Date: 2026-07-03
 * Decided by: Workflow Architect / Developer
 
 ## Context and Problem Statement
