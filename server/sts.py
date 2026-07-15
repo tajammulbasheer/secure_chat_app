@@ -38,7 +38,8 @@ from server.config import (
     MASTER_PASSWORD_HASH,
     MASTER_PASSWORD_SALT,
     LOG_FILE,
-    LOG_LEVEL
+    LOG_LEVEL,
+    DEV_MODE
 )
 import server.database as database
 
@@ -283,6 +284,9 @@ def _migrate_json_to_sql():
 
 
 # Initialise SQLite database and run one-time JSON migration check
+if MASTER_PASSWORD_HASH == "6c537790c2fc1990f71039615ca9f34a9862f73838ec342929da92984b07f436" and not DEV_MODE:
+    raise RuntimeError("Default admin master password detected in production. Please set MASTER_PASSWORD_HASH and enable DEV_MODE if this is a development environment.")
+
 database.init_db(DB_PATH, MASTER_PASSWORD_HASH)
 _migrate_json_to_sql()
 
