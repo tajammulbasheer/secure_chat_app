@@ -1,7 +1,13 @@
 # Task Management Board (Secure Chat App)
 
 ## 🔄 In Progress
-- All tasks complete!
+- [ ] **Task 20: Final Audit Polish** (Milestone 5) - Address the final 5 security/polish issues:
+  - [ ] 20.1 Enforce private key passphrase in GUI & client engine
+  - [ ] 20.2 Refuse to boot with default `.env` admin password outside of DEV_MODE
+  - [ ] 20.3 Remove `.bak` and `sts.db` from git tracking and update `.gitignore`
+  - [ ] 20.4 Document TLS strict-mode workaround with a comment
+  - [ ] 20.5 Add linters (`ruff`, `mypy`, `black`) to `requirements-dev.txt`
+  - Branch: `feature/audit-polish`
 
 ## ⏭️ Next Tasks (Advanced Upgrades)
 - None
