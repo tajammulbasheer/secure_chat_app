@@ -103,7 +103,11 @@ python -m pytest tests/
 ---
 
 ## 🛡️ Security Audit & Roadmap
-To view the detailed vulnerability report and audit results, read:
-* [PROJECT_ANALYSIS.md](PROJECT_ANALYSIS.md)
-* [Active Task Board (TODO.md)](TODO.md)
+The original vulnerabilities and how each was fixed:
+* [Security audit and remediation](docs/SECURITY_AUDIT.md)
+* [Architecture](docs/ARCHITECTURE.md) and [decision records](docs/adrs/)
 * [Project Changelog (CHANGELOG.md)](CHANGELOG.md)
+
+## License
+
+MIT. See [LICENSE](LICENSE).

@@ -35,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Polished root `README.md` to represent package execution commands, configuration instructions, testing, and Docker execution.
 
 ### Security
-- Completed a comprehensive architecture and security audit (`PROJECT_ANALYSIS.md`) detailing critical, high, and medium vulnerabilities.
+- Completed a comprehensive architecture and security audit (now [`docs/SECURITY_AUDIT.md`](docs/SECURITY_AUDIT.md)) detailing critical, high, and medium vulnerabilities.
 - Resolved bypassed certificate authority validation ([C-2]) by enforcing x509 signature verification against `rootCA.pem` before fingerprint pinning.
 - Resolved unencrypted command/control STS server communication ([C-3]) by wrapping KDC socket connections in TLS.
 - Mitigated Lack of Perfect Forward Secrecy ([H-1]) and legacy signature padding ([M-1]) by replacing RSA session key encapsulation with signed Ephemeral Diffie-Hellman (ECDHE SECP256R1) key agreement.
